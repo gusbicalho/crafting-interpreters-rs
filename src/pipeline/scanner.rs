@@ -10,13 +10,17 @@ use state::ScanState;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ScanError {
-    #[allow(dead_code)]
     msg: String,
 }
 
 impl ScanError {
-    pub fn new(_state: &ScanState, msg: String) -> Self {
+    pub fn make(_state: &ScanState, msg: String) -> Self {
         Self { msg }
+    }
+
+
+    pub fn message(&self) -> &str {
+        self.msg.as_ref()
     }
 }
 
@@ -98,7 +102,7 @@ fn scan_next(state: &mut ScanState) -> Result<Option<Token>, ScanError> {
             other if other.is_whitespace() => Ok(None),
             other if other.is_ascii_digit() => scan_number_literal(state).map(Some),
             other if is_identifier_first(other) => scan_identifier(state).map(Some),
-            other => Err(ScanError::new(
+            other => Err(ScanError::make(
                 state,
                 format!("Unexpected character {}", other),
             )),
@@ -141,7 +145,7 @@ fn scan_number_literal(state: &mut ScanState) -> Result<Token, ScanError> {
 fn scan_string_literal(state: &mut ScanState) -> Result<Token, ScanError> {
     while state.match_pred(|c| c != '"').is_some() {}
     if !state.match_char('"') {
-        Err(ScanError::new(
+        Err(ScanError::make(
             state,
             "Unterminated string literal".to_string(),
         ))?;
