@@ -5,3 +5,12 @@ version = 3
 [[package]]
 name = "crafting-interpreters-rs"
 version = "0.1.0"
+dependencies = [
+ "rangemap",
+]
+
+[[package]]
+name = "rangemap"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ea2d559b3970fe7aa56ce7432a3702ff4b20a57b543ae08b4850ee629353ea6"
