@@ -5,8 +5,9 @@ use std::mem;
 pub enum OpCode {
     Return = 0,
     Constant = 1,
+    ConstantLong = 2,
 }
-const MAX_OPCODE: u8 = 1;
+const MAX_OPCODE: u8 = 2;
 
 impl TryFrom<u8> for OpCode {
     type Error = u8;
