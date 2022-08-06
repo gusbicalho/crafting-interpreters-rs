@@ -3,19 +3,17 @@ use std::io::{self, BufWriter};
 mod opcode;
 pub use opcode::OpCode;
 
-mod constant;
-pub use constant::Constant;
-
 mod source_map;
 pub use source_map::{LineInfo, SourceMap};
 
 mod bytes;
 use bytes::ToBytes;
 
+use super::value::RTValue;
 use self::bytes::FromBytes;
 
 pub struct Chunk<'s> {
-    constants: Vec<Constant>,
+    constants: Vec<RTValue>,
     code: Vec<u8>,
     source_map: source_map::SourceMap<'s>,
 }
@@ -45,8 +43,8 @@ impl<'s> Chunk<'s> {
         }
     }
 
-    pub fn push_constant(&mut self, constant: Constant) -> u16 {
-        self.constants.push(constant);
+    pub fn push_constant(&mut self, value: RTValue) -> u16 {
+        self.constants.push(value);
         u16::try_from(self.constants.len() - 1).expect("Too many constants!")
     }
 
@@ -190,7 +188,7 @@ mod tests {
         let mut chunk = Chunk::new();
         chunk.push_op_code(OpCode::Return, info(1, 1));
         chunk.push_op_code(OpCode::Return, None);
-        let constant_index = chunk.push_constant(Constant::Number(42.0));
+        let constant_index = chunk.push_constant(RTValue::Number(42.0));
         chunk.push_constant_op(constant_index, info(2, 3));
         chunk.push_op_code(OpCode::Return, info(2, 4));
         chunk.push_constant_op(300u16, info(3, 7));
