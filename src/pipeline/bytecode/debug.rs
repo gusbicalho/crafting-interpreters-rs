@@ -2,17 +2,15 @@ use std::io::{self, BufWriter, Write};
 
 use super::{
     bytes::{self, FromBytes},
-    Chunk, OpCode,
+    Chunk, ConstantIndex, OpCode, CONSTANT_LONG_ARG_BYTES,
 };
 
 impl<'s> Chunk<'s> {
-    fn write_line_prefix<W: io::Write>(
-        &self,
-        w: &mut W,
-        offset: usize,
-        previous_line: Option<usize>,
-    ) -> Option<usize> {
+    fn write_line_prefix<W: io::Write>(&self, w: &mut W, offset: usize) {
         write!(w, "{:0>4} ", offset).unwrap();
+        let previous_line = offset
+            .checked_sub(1)
+            .and_then(|offset| self.source_map.get_line_info(offset).map(|li| li.line));
         match self.source_map.get_line_info(offset) {
             Some(line_info) => {
                 if previous_line == Some(line_info.line) {
@@ -20,11 +18,9 @@ impl<'s> Chunk<'s> {
                 } else {
                     write!(w, "{:>4} ", line_info.line).unwrap();
                 }
-                Some(line_info.line)
             }
             None => {
                 write!(w, "   ? ").unwrap();
-                None
             }
         }
     }
@@ -39,7 +35,7 @@ impl<'s> Chunk<'s> {
         op: &OpCode,
         arg_bytes: [Option<u8>; N],
     ) where
-        [u8; N]: FromBytes<u16>,
+        [u8; N]: FromBytes<ConstantIndex>,
     {
         match bytes::all_there(&arg_bytes).map(|bytes| bytes.bytes_to_num()) {
             None => {
@@ -49,14 +45,12 @@ impl<'s> Chunk<'s> {
                     op,
                     arg_bytes
                         .iter()
-                        .map(|a| a
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| "MISSING".to_string()))
-                        .collect::<Vec<String>>()
+                        .map_while(|opt_byte| *opt_byte)
+                        .collect::<Vec<u8>>()
                 )
                 .unwrap();
             }
-            Some(index) => match self.constants.get(usize::from(index)) {
+            Some(index) => match self.get_constant(index) {
                 None => {
                     writeln!(w, "{:?} {:>4} <BAD INDEX>", op, index).unwrap();
                 }
@@ -67,38 +61,49 @@ impl<'s> Chunk<'s> {
         }
     }
 
+    pub fn describe_instruction<'i, W>(
+        &self,
+        w: &mut W,
+        offset: usize,
+        op_byte: u8,
+        ops: &mut impl Iterator<Item = &'i u8>,
+    ) where
+        W: io::Write,
+    {
+        self.write_line_prefix(w, offset);
+        match OpCode::try_from(op_byte) {
+            Ok(op @ OpCode::Constant) => {
+                self.describe_constant(w, &op, bytes::try_next_bytes::<1, _, _>(ops, |b| *b))
+            }
+            Ok(op @ OpCode::ConstantLong) => self.describe_constant(
+                w,
+                &op,
+                bytes::try_next_bytes::<CONSTANT_LONG_ARG_BYTES, _, _>(ops, |b| *b),
+            ),
+            Ok(op) => Self::describe_simple(w, &op),
+            Err(byte) => {
+                writeln!(w, "Unknown op {}", byte).unwrap();
+            }
+        }
+    }
+
     pub fn describe<W>(&self, w: &mut W)
     where
         W: io::Write,
     {
-        let mut previous_line = None;
-        let mut ops = self.code.iter().enumerate();
-        fn next_bytes<'l, const N: usize>(
-            code: &mut impl Iterator<Item = (usize, &'l u8)>,
-        ) -> [Option<u8>; N] {
-            let mut result = [None; N];
-            for i in result.iter_mut() {
-                *i = code.next().map(|v| *v.1);
-            }
-            result
+        let mut ops = DebugIter::new(self.code.iter());
+        while let Some(op) = ops.next() {
+            self.describe_instruction(w, ops.offset() - 1, *op, &mut ops);
         }
-        // we will use this iterator for more stuff later
-        #[allow(clippy::while_let_on_iterator)]
-        while let Some((offset, op)) = ops.next() {
-            previous_line = self.write_line_prefix(w, offset, previous_line);
-            match OpCode::try_from(*op) {
-                Ok(op @ OpCode::Constant) => {
-                    self.describe_constant(w, &op, next_bytes::<1>(&mut ops))
-                }
-                Ok(op @ OpCode::ConstantLong) => {
-                    self.describe_constant(w, &op, next_bytes::<2>(&mut ops))
-                }
-                Ok(op) => Self::describe_simple(w, &op),
-                Err(byte) => {
-                    writeln!(w, "Unknown op {}", byte).unwrap();
-                }
-            }
-        }
+    }
+
+    pub fn describe_instruction_to_stderr<'i>(
+        &self,
+        offset: usize,
+        op_byte: u8,
+        ops: &mut impl Iterator<Item = &'i u8>,
+    ) {
+        self.describe_instruction(&mut io::stderr().lock(), offset, op_byte, ops)
     }
 
     pub fn describe_to_stderr(&self, chunk_name: Option<&str>) {
@@ -122,6 +127,35 @@ impl<'s> Chunk<'s> {
     }
 }
 
+struct DebugIter<I> {
+    inner: I,
+    offset: usize,
+}
+
+impl<I> DebugIter<I> {
+    fn new(inner: I) -> Self {
+        Self { inner, offset: 0 }
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+}
+
+impl<I> Iterator for DebugIter<I>
+where
+    I: Iterator,
+{
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|v| {
+            self.offset += 1;
+            v
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::pipeline::value::RTValue;
@@ -137,7 +171,7 @@ mod tests {
         let constant_index = chunk.push_constant(RTValue::Number(42.0));
         chunk.push_load_constant_op(constant_index, info(2, 3));
         chunk.push_op_code(OpCode::Return, info(2, 4));
-        chunk.push_load_constant_op(300u16, info(3, 7));
+        chunk.push_load_constant_op(300, info(3, 7));
         chunk.push_op_code(OpCode::ConstantLong, info(7, 4));
         chunk.push_op_arg(7, info(7, 4));
         assert_eq!(
@@ -147,7 +181,7 @@ mod tests {
              0002    2 Constant    0 Number(42.0)\n\
              0004    | Return\n\
              0005    3 ConstantLong  300 <BAD INDEX>\n\
-             0008    7 ConstantLong <BAD BYTES>[\"7\", \"MISSING\"]\n\
+             0014    7 ConstantLong <BAD BYTES>[7]\n\
              "
         );
     }

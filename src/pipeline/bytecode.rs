@@ -1,10 +1,12 @@
 mod opcode;
+use std::mem;
+
 pub use opcode::OpCode;
 
 mod source_map;
 pub use source_map::{LineInfo, SourceMap};
 
-mod bytes;
+pub mod bytes;
 use bytes::ToBytes;
 
 pub mod debug;
@@ -17,6 +19,9 @@ pub struct Chunk<'s> {
     source_map: source_map::SourceMap<'s>,
 }
 
+pub type ConstantIndex = usize;
+pub const CONSTANT_LONG_ARG_BYTES: usize = mem::size_of::<ConstantIndex>();
+
 impl<'s> Chunk<'s> {
     pub fn new() -> Self {
         Self {
@@ -24,6 +29,15 @@ impl<'s> Chunk<'s> {
             code: Vec::new(),
             source_map: SourceMap::new(),
         }
+    }
+
+    pub fn code(&self) -> &[u8] {
+        self.code.as_ref()
+    }
+
+    #[inline(always)]
+    pub fn get_constant(&self, constant_index: ConstantIndex) -> Option<&RTValue> {
+        self.constants.get(constant_index)
     }
 
     pub fn get_line_info(&self, instruction_index: usize) -> Option<&LineInfo<'s>> {
@@ -46,12 +60,16 @@ impl<'s> Chunk<'s> {
         }
     }
 
-    pub fn push_constant(&mut self, value: RTValue) -> u16 {
+    pub fn push_constant(&mut self, value: RTValue) -> ConstantIndex {
         self.constants.push(value);
-        u16::try_from(self.constants.len() - 1).expect("Too many constants!")
+        self.constants.len() - 1
     }
 
-    pub fn push_load_constant_op(&mut self, constant_index: u16, line_info: Option<LineInfo<'s>>) {
+    pub fn push_load_constant_op(
+        &mut self,
+        constant_index: ConstantIndex,
+        line_info: Option<LineInfo<'s>>,
+    ) {
         match u8::try_from(constant_index) {
             Ok(byte) => {
                 self.push_op_code(OpCode::Constant, line_info.clone());
@@ -59,7 +77,7 @@ impl<'s> Chunk<'s> {
             }
             Err(_) => {
                 self.push_op_code(OpCode::ConstantLong, line_info.clone());
-                for byte in ToBytes::<2>::num_to_bytes(&constant_index) {
+                for byte in ToBytes::<CONSTANT_LONG_ARG_BYTES>::num_to_bytes(&constant_index) {
                     self.push_op_arg(byte, line_info.clone());
                 }
             }

@@ -4,7 +4,7 @@ use crate::pipeline::{
     self,
     bytecode::{Chunk, LineInfo, OpCode},
     scanner,
-    value::RTValue,
+    value::RTValue, vm::VM,
 };
 
 pub struct CliConfig {}
@@ -38,9 +38,11 @@ pub fn run(_config: &CliConfig) {
     //     interpret(pipeline::source::from_repl_input(&input));
     // }
 
+    let mut vm = VM::new();
     let source = "source";
     let mut chunk = Chunk::new();
     chunk.push_constant_and_load_op(RTValue::Number(1.2), Some(LineInfo::new(source, 123, 0)));
     chunk.push_op_code(OpCode::Return, Some(LineInfo::new(source, 123, 1)));
     chunk.describe_to_stderr(Some("test chunk"));
+    vm.with_chunk(&chunk).run().unwrap();
 }
